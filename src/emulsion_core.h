@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace emu {
 
@@ -31,6 +32,10 @@ const char* inputName(int index);
 int lookCount();
 const char* lookName(int index);
 bool lookIsMonochrome(int index);
+
+// Parse a 3D .cube LUT (0..1 domain) into [b][g][r][3] floats. Returns false if the file is unusable.
+// Built-in looks come first in the menu; .cube files in the user Looks folder are appended at load.
+bool loadCube(const char* path, int& size, std::vector<float>& out);
 
 struct Settings {
     int input = kInputRec709;

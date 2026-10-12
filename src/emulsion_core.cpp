@@ -4,8 +4,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -281,24 +286,54 @@ inline void desatToNonNegative(float rgb[3], const float w[3]) {
 }
 
 // ------------------------------------------------------------------ look LUTs
+struct LookEntry {
+    std::string name;
+    int size = 0;
+    std::vector<float> data;  // [b][g][r][3]
+};
+
+// User looks folder: .cube files here are appended to the Film Look menu at plugin load.
+std::filesystem::path userLookDir() {
+    const char* home = std::getenv("HOME");
+    if (!home) return {};
+#ifdef __APPLE__
+    return std::filesystem::path(home) / "Library/Application Support/Emulsion/Looks";
+#else
+    return std::filesystem::path(home) / ".local/share/emulsion/looks";
+#endif
+}
+
 struct LookTables {
-    std::vector<float> lut[data::kLookCount];
+    std::vector<LookEntry> looks;
     LookTables() {
         const size_t n = size_t(data::kLutSize) * data::kLutSize * data::kLutSize * 3;
         for (int k = 0; k < data::kLookCount; ++k) {
-            lut[k].resize(n);
-            for (size_t i = 0; i < n; ++i) lut[k][i] = float(data::kLookLuts[k][i]) * (1.0f / 65535.0f);
+            LookEntry e{data::kLookNames[k], data::kLutSize, std::vector<float>(n)};
+            for (size_t i = 0; i < n; ++i) e.data[i] = float(data::kLookLuts[k][i]) * (1.0f / 65535.0f);
+            looks.push_back(std::move(e));
+        }
+        std::error_code ec;
+        std::vector<std::filesystem::path> files;
+        for (const auto& f : std::filesystem::directory_iterator(userLookDir(), ec))
+            if (f.path().extension() == ".cube") files.push_back(f.path());
+        std::sort(files.begin(), files.end());
+        for (const auto& f : files) {
+            LookEntry e{f.stem().string()};
+            if (loadCube(f.string().c_str(), e.size, e.data)) looks.push_back(std::move(e));
         }
     }
 };
-const float* lookTable(int index) {
+const std::vector<LookEntry>& looks() {
     static const LookTables tables;  // thread-safe one-time init
-    return tables.lut[std::max(0, std::min(index, data::kLookCount - 1))].data();
+    return tables.looks;
+}
+const LookEntry& lookTable(int index) {
+    const auto& l = looks();
+    return l[std::max(0, std::min(index, int(l.size()) - 1))];
 }
 
 // Tetrahedral interpolation in a [b][g][r][3] cube.
-inline void applyLut(const float* lut, const float in[3], float out[3]) {
-    const int N = data::kLutSize;
+inline void applyLut(const float* lut, int N, const float in[3], float out[3]) {
     const float r = clampf(in[0], 0.0f, 1.0f) * float(N - 1);
     const float g = clampf(in[1], 0.0f, 1.0f) * float(N - 1);
     const float b = clampf(in[2], 0.0f, 1.0f) * float(N - 1);
@@ -692,6 +727,7 @@ struct Prepared {
     float exposureGain = 1.0f;
     float contrast = 1.0f;
     const float* lut = nullptr;
+    int lutN = 0;
     float strength = 1.0f;
     float saturation = 1.0f;
     std::shared_ptr<ToneTable> tone;
@@ -708,7 +744,9 @@ Prepared prepare(const Settings& s) {
     p.decodeScale = dt.scale;
     p.exposureGain = float(std::exp2(clampf(float(s.exposure), -10.0f, 10.0f)));
     p.contrast = clampf(float(s.contrast), 0.2f, 3.0f);
-    p.lut = lookTable(s.look);
+    const LookEntry& look = lookTable(s.look);
+    p.lut = look.data.data();
+    p.lutN = look.size;
     p.strength = clampf(float(s.strength), 0.0f, 1.0f);
     p.saturation = clampf(float(s.saturation), 0.0f, 3.0f);
     p.enc = &encodeLut();
@@ -742,7 +780,7 @@ inline void stageRender(const Prepared& p, const float lin[3], float out[3]) {
     else
         renderScene(*p.tone, *p.enc, lin, base);
     float looked[3];
-    applyLut(p.lut, base, looked);
+    applyLut(p.lut, p.lutN, base, looked);
     float mix[3];
     for (int c = 0; c < 3; ++c) mix[c] = base[c] + p.strength * (looked[c] - base[c]);
     const float Y = dot3(kY709, mix);
@@ -754,9 +792,43 @@ inline void stageRender(const Prepared& p, const float lin[3], float out[3]) {
 // ------------------------------------------------------------------ public API
 int inputCount() { return data::kInputCount; }
 const char* inputName(int i) { return (i >= 0 && i < data::kInputCount) ? data::kInputNames[i] : ""; }
-int lookCount() { return data::kLookCount; }
-const char* lookName(int i) { return (i >= 0 && i < data::kLookCount) ? data::kLookNames[i] : ""; }
-bool lookIsMonochrome(int i) { return i >= 0 && i < data::kLookCount && std::strncmp(data::kLookNames[i], "Mono", 4) == 0; }
+int lookCount() { return int(looks().size()); }
+const char* lookName(int i) { return (i >= 0 && i < lookCount()) ? looks()[i].name.c_str() : ""; }
+bool lookIsMonochrome(int i) { return i >= 0 && i < lookCount() && looks()[i].name.compare(0, 4, "Mono") == 0; }
+
+bool loadCube(const char* path, int& size, std::vector<float>& out) {
+    std::ifstream f(path);
+    if (!f) return false;
+    size = 0;
+    out.clear();
+    std::string line;
+    while (std::getline(f, line)) {
+        std::istringstream ls(line);
+        std::string key;
+        if (!(ls >> key) || key[0] == '#' || key == "TITLE") continue;
+        if (key == "LUT_1D_SIZE") return false;
+        if (key == "LUT_3D_SIZE") {
+            if (!(ls >> size) || size < 2 || size > 129) return false;
+            out.reserve(size_t(size) * size * size * 3);
+            continue;
+        }
+        if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
+            const float want = key == "DOMAIN_MIN" ? 0.0f : 1.0f;
+            float v[3];
+            if (!(ls >> v[0] >> v[1] >> v[2]) || v[0] != want || v[1] != want || v[2] != want) return false;
+            continue;
+        }
+        if (key.find_first_not_of("+-.0123456789eE") != std::string::npos) continue;  // other keywords
+        float g, b;
+        if (size == 0 || !(ls >> g >> b)) return false;
+        out.push_back(std::strtof(key.c_str(), nullptr));
+        out.push_back(g);
+        out.push_back(b);
+    }
+    if (size == 0 || out.size() != size_t(size) * size * size * 3) return false;
+    for (float& v : out) v = std::isfinite(v) ? clampf(v, 0.0f, 1.0f) : 0.0f;
+    return true;
+}
 
 float decodeValue(int profile, float code) { return decodeExact(profile, code); }
 

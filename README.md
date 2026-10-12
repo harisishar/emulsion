@@ -103,6 +103,26 @@ or proxies, or set Grain Amount to 0 while you grade and turn it back on before 
 | Mono 400 | Contrasty black and white (grain turns monochrome automatically) |
 | Neutral (no look) | Just the neutral film print render, a clean base for your own grade |
 
+### Adding your own looks (no rebuild)
+
+Drop `.cube` LUT files into `~/Library/Application Support/Emulsion/Looks` (Linux:
+`~/.local/share/emulsion/looks`). Each one appears at the end of the **Film Look** menu, named after the
+file. A cube is applied the same way as the built-in looks: Rec.709 in, Rec.709 out, on top of the neutral
+film print. Look Strength, Saturation, halation and grain all still work on it.
+
+To make one in Resolve:
+
+1. Put Emulsion on a clip with **Film Look = Neutral** and grab a still (or render a frame).
+2. Import that still as a Rec.709 clip and grade it however you like (no Emulsion on it).
+3. Right-click the clip in the Color page thumbnails and choose **Generate LUT > 33 Point Cube**.
+4. Copy the `.cube` into the Looks folder.
+5. Quit Resolve, delete Resolve's OFX plugin cache (`OFXPluginCacheV2.xml`, see Troubleshooting) and
+   reopen. Resolve caches the menu, so new looks only show after this.
+
+Any other Rec.709-to-Rec.709 `.cube` works too. A file whose name starts with `Mono` also gets monochrome
+grain. Projects remember the look by its position in the menu, so removing or renaming a cube shifts the
+looks listed after it (the built-in looks always come first and never move).
+
 ---
 
 ## Troubleshooting

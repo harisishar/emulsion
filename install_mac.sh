@@ -18,6 +18,8 @@ sudo rm -rf "$DEST/Emulsion.ofx.bundle"
 sudo cp -R "$BUNDLE" "$DEST/"
 sudo xattr -dr com.apple.quarantine "$DEST/Emulsion.ofx.bundle" 2>/dev/null || true
 
+mkdir -p "$HOME/Library/Application Support/Emulsion/Looks"
+
 echo ""
 echo "Installed. Now:"
 echo "  1. Quit DaVinci Resolve completely and open it again."

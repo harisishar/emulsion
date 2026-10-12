@@ -240,7 +240,37 @@ static void testSpeed() {
     }
 }
 
+static void testUserCube() {
+    const std::string path = "test_identity.cube";
+    const int N = 17;
+    {
+        std::ofstream f(path);
+        f << "# identity\nTITLE \"id\"\nLUT_3D_SIZE 17\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n";
+        for (int b = 0; b < N; ++b)
+            for (int g = 0; g < N; ++g)
+                for (int r = 0; r < N; ++r) f << r / 16.0 << ' ' << g / 16.0 << ' ' << b / 16.0 << '\n';
+    }
+    int size = 0;
+    std::vector<float> lut;
+    CHECK(emu::loadCube(path.c_str(), size, lut), "identity cube rejected");
+    CHECK(size == N && lut.size() == size_t(N) * N * N * 3, "cube size %d", size);
+    if (lut.size() == size_t(N) * N * N * 3) {
+        const size_t i = ((size_t(3) * N + 5) * N + 9) * 3;  // b=3, g=5, r=9: red is fastest
+        CHECK(std::fabs(lut[i] - 9 / 16.0f) < 1e-6f && std::fabs(lut[i + 1] - 5 / 16.0f) < 1e-6f &&
+                  std::fabs(lut[i + 2] - 3 / 16.0f) < 1e-6f,
+              "cube order wrong");
+    }
+    {
+        std::ofstream f(path);
+        f << "LUT_3D_SIZE 17\n0 0 0\n1 1 1\n";  // truncated
+    }
+    CHECK(!emu::loadCube(path.c_str(), size, lut), "truncated cube accepted");
+    CHECK(!emu::loadCube("no_such_file.cube", size, lut), "missing cube accepted");
+    std::remove(path.c_str());
+}
+
 int main() {
+    testUserCube();
     testDecode();
     testPixels();
     testImageNoEffectsMatchesPixel();
