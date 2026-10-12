@@ -1,0 +1,24 @@
+# Linux build used for testing in CI / the dev container. macOS users: run ./build_mac.sh
+OFX      := third_party/openfx
+CXX      ?= g++
+CXXFLAGS := -std=c++17 -O3 -DNDEBUG -fPIC -fvisibility=hidden -Wall -Wextra -pthread \
+            -I$(OFX)/include -I$(OFX)/Support/include -I$(OFX)/Support/Library -Isrc
+SUPPORT  := $(wildcard $(OFX)/Support/Library/ofxs*.cpp)
+SRCS     := src/EmulsionPlugin.cpp src/emulsion_core.cpp $(SUPPORT)
+OBJS     := $(patsubst %.cpp,build/obj/%.o,$(notdir $(SRCS)))
+BUNDLE   := build/Emulsion.ofx.bundle/Contents/Linux-x86-64/Emulsion.ofx
+
+vpath %.cpp src $(OFX)/Support/Library
+
+all: $(BUNDLE)
+
+build/obj/%.o: %.cpp
+	@mkdir -p build/obj
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUNDLE): $(OBJS)
+	@mkdir -p $(dir $@)
+	$(CXX) -shared -pthread -Wl,--exclude-libs,ALL $(OBJS) -o $@
+
+clean:
+	rm -rf build/obj build/Emulsion.ofx.bundle
